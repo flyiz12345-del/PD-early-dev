@@ -1,0 +1,2 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/flyiz12345-del/PD-early-dev/refs/heads/main/Antiaim.lua", true))()
+  
