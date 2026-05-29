@@ -1,537 +1,551 @@
 --[[
-    SKEET-STYLE ANTI-AIM UI v3.0
-    Mobile Friendly | Skeet.cc Aesthetic
-    Private server use only
+    SKEET-STYLE ANTI-AIM UI v4.0
+    
+    Engines included:
+       Anti-Aim (8 modes)
+       Waist Pitch  (340 deg skyward tilt)
+       Look-Back    (180 deg yaw flip)
+       Anti-Separation Matrix (glued joints)
+    Mobile friendly | Skeet.cc aesthetic
+AI did the sorting shout out claude im lazy
 ]]
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+-- ============================================================
+-- SERVICES
+-- ============================================================
+local Players        = game:GetService("Players")
+local RunService     = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local hrp = character:WaitForChild("HumanoidRootPart")
+local TweenService   = game:GetService("TweenService")
 
 -- ============================================================
--- CONFIG
+-- CHARACTER REFS  (rebuild on respawn)
+-- ============================================================
+local player    = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp       = character:WaitForChild("HumanoidRootPart")
+local humanoid  = character:WaitForChild("Humanoid")
+
+-- per-engine caches
+local originalC1s          = {}   -- waist pitch
+local rootJointBaselineC1  = nil  -- look-back & anti-sep
+local savedPositions       = { RootJoint=nil, Waist=nil, Head=nil }
+
+local function cleanAndCache(char)
+    character              = char
+    hrp                    = char:WaitForChild("HumanoidRootPart")
+    humanoid               = char:WaitForChild("Humanoid")
+    rootJointBaselineC1    = nil
+    table.clear(originalC1s)
+    for k in pairs(savedPositions) do savedPositions[k] = nil end
+end
+
+player.CharacterAdded:Connect(cleanAndCache)
+cleanAndCache(player.Character)
+
+-- ============================================================
+-- MASTER CONFIG
 -- ============================================================
 local CONFIG = {
-    enabled   = false,
-    mode      = "psycho",
-    speed     = 5,
-    intensity = 1,
+    -- Anti-Aim
+    antiAim    = false,
+    aaMode     = "psycho",
+    aaSpeed    = 5,
+    aaIntensity= 1,
+
+    -- Waist Pitch
+    waistPitch = false,
+    waistAngle = 340,   -- 340 deg = -20 deg backward arch
+
+    -- Look-Back
+    lookBack   = false,
+
+    -- Anti-Separation
+    antiSep    = false,
+    sepWaist   = 45,
+    sepHead    = 0,
 }
 
 -- ============================================================
--- ANTI-AIM ENGINE
+-- ENGINE 1 - ANTI-AIM (8 modes)
 -- ============================================================
-local t = 0
-local modes = {
+local aaTime = 0
+local aaModes = {
     spin = function(dt)
-        t = t + dt
-        return CFrame.Angles(0, math.rad(t * CONFIG.speed * 500), 0)
+        aaTime = aaTime + dt
+        return CFrame.Angles(0, math.rad(aaTime * CONFIG.aaSpeed * 500), 0)
     end,
     jitter = function(dt)
-        t = t + dt
+        aaTime = aaTime + dt
         return CFrame.Angles(
-            math.rad(math.sin(t * CONFIG.speed * 50) * 45 * CONFIG.intensity),
-            math.rad(math.cos(t * CONFIG.speed * 50) * 180 * CONFIG.intensity), 0)
+            math.rad(math.sin(aaTime*CONFIG.aaSpeed*50)*45*CONFIG.aaIntensity),
+            math.rad(math.cos(aaTime*CONFIG.aaSpeed*50)*180*CONFIG.aaIntensity), 0)
     end,
     random = function()
         return CFrame.Angles(
-            math.rad((math.random()-.5)*90*CONFIG.intensity),
-            math.rad((math.random()-.5)*360*CONFIG.intensity),
-            math.rad((math.random()-.5)*45*CONFIG.intensity))
+            math.rad((math.random()-.5)*90*CONFIG.aaIntensity),
+            math.rad((math.random()-.5)*360*CONFIG.aaIntensity),
+            math.rad((math.random()-.5)*45*CONFIG.aaIntensity))
     end,
     orbital = function(dt)
-        t = t + dt
+        aaTime = aaTime + dt
         return CFrame.Angles(
-            math.rad(math.sin(t*CONFIG.speed*3)*30*CONFIG.intensity),
-            math.rad(t*CONFIG.speed*500),
-            math.rad(math.cos(t*CONFIG.speed*3)*30*CONFIG.intensity))
+            math.rad(math.sin(aaTime*CONFIG.aaSpeed*3)*30*CONFIG.aaIntensity),
+            math.rad(aaTime*CONFIG.aaSpeed*500),
+            math.rad(math.cos(aaTime*CONFIG.aaSpeed*3)*30*CONFIG.aaIntensity))
     end,
     glitch = function(dt)
-        t = t + dt
-        local f = math.floor(t*20)%4
+        aaTime = aaTime + dt
+        local f = math.floor(aaTime*20)%4
         return CFrame.Angles(
-            math.rad(({0,45,-45,0})[f+1]*CONFIG.intensity),
-            math.rad(f*90 + (math.random()-.5)*45*CONFIG.intensity), 0)
+            math.rad(({0,45,-45,0})[f+1]*CONFIG.aaIntensity),
+            math.rad(f*90+(math.random()-.5)*45*CONFIG.aaIntensity), 0)
     end,
     psycho = function(dt)
-        t = t + dt
-        local s = t*CONFIG.speed*10
+        aaTime = aaTime + dt
+        local s = aaTime*CONFIG.aaSpeed*10
         return CFrame.Angles(
-            math.rad(math.sin(s)*45*CONFIG.intensity + (math.random()-.5)*90*CONFIG.intensity),
-            math.rad(s*100 + math.cos(t*50)*180),
-            math.rad(math.cos(s)*45*CONFIG.intensity))
+            math.rad(math.sin(s)*45*CONFIG.aaIntensity+(math.random()-.5)*90*CONFIG.aaIntensity),
+            math.rad(s*100+math.cos(aaTime*50)*180),
+            math.rad(math.cos(s)*45*CONFIG.aaIntensity))
     end,
     earthquake = function(dt)
-        t = t + dt
+        aaTime = aaTime + dt
         return CFrame.Angles(
-            math.rad(math.sin(t*CONFIG.speed*30)*20*CONFIG.intensity*math.random()),
-            math.rad(t*CONFIG.speed*100%360),
-            math.rad(math.cos(t*CONFIG.speed*30)*20*CONFIG.intensity*math.random()))
+            math.rad(math.sin(aaTime*CONFIG.aaSpeed*30)*20*CONFIG.aaIntensity*math.random()),
+            math.rad(aaTime*CONFIG.aaSpeed*100%360),
+            math.rad(math.cos(aaTime*CONFIG.aaSpeed*30)*20*CONFIG.aaIntensity*math.random()))
     end,
     matrix = function(dt)
-        t = t + dt
-        local w = math.sin(t*2)*15*CONFIG.intensity
-        return CFrame.Angles(math.rad(w), math.rad(t*CONFIG.speed*15), math.rad(-w))
+        aaTime = aaTime + dt
+        local w = math.sin(aaTime*2)*15*CONFIG.aaIntensity
+        return CFrame.Angles(math.rad(w), math.rad(aaTime*CONFIG.aaSpeed*15), math.rad(-w))
     end,
 }
 
 RunService.RenderStepped:Connect(function(dt)
-    if not CONFIG.enabled then return end
-    local fn = modes[CONFIG.mode]
+    if not CONFIG.antiAim then return end
+    local fn = aaModes[CONFIG.aaMode]
     if fn then
         hrp.CFrame = CFrame.new(hrp.Position) * fn(dt)
     end
 end)
 
 -- ============================================================
--- GUI  (Skeet.cc aesthetic, mobile-friendly)
+-- ENGINE 2 - WAIST PITCH  (340 deg skyward tilt)
+-- ============================================================
+RunService.RenderStepped:Connect(function()
+    if not CONFIG.waistPitch then
+        -- restore joints when disabled
+        for joint, origC1 in pairs(originalC1s) do
+            if joint and joint.Parent then joint.C1 = origC1 end
+        end
+        return
+    end
+    if not hrp or not humanoid then return end
+
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    if not humanoid.AutoRotate then humanoid.AutoRotate = true end
+
+    -- yaw follow
+    local _, camYaw, _ = camera.CFrame:ToEulerAnglesYXZ()
+    hrp.CFrame = hrp.CFrame:Lerp(
+        CFrame.new(hrp.Position) * CFrame.fromEulerAnglesYXZ(0, camYaw, 0), 0.35)
+
+    -- find waist joint
+    local waistJoint = nil
+    for _, child in ipairs(character:GetDescendants()) do
+        if child:IsA("Motor6D") then
+            if child.Name == "Waist"
+            or (child.Part1 and child.Part1.Name == "UpperTorso") then
+                waistJoint = child break
+            end
+        end
+    end
+
+    if waistJoint and not originalC1s[waistJoint] then
+        originalC1s[waistJoint] = waistJoint.C1
+    end
+
+    if waistJoint and originalC1s[waistJoint] then
+        waistJoint.C1 = originalC1s[waistJoint]
+            * CFrame.Angles(math.rad(CONFIG.waistAngle), 0, 0)
+    end
+end)
+
+-- ============================================================
+-- ENGINE 3 - LOOK-BACK  (180 deg yaw flip)
+-- ============================================================
+RunService:BindToRenderStep("SkeetLookBack", Enum.RenderPriority.Last.Value, function()
+    if not CONFIG.lookBack then return end
+    if not hrp or not humanoid then return end
+
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    if not humanoid.AutoRotate then humanoid.AutoRotate = true end
+
+    local rootJoint = nil
+    for _, child in ipairs(character:GetDescendants()) do
+        if child:IsA("Motor6D")
+        and (child.Name == "RootJoint"
+             or (child.Part0 and child.Part0.Name == "HumanoidRootPart")) then
+            rootJoint = child break
+        end
+    end
+
+    if rootJoint and not rootJointBaselineC1 then
+        rootJointBaselineC1 = rootJoint.C1
+    end
+
+    local _, camYaw, _ = camera.CFrame:ToEulerAnglesYXZ()
+    local _, hrpYaw, _ = hrp.CFrame:ToEulerAnglesYXZ()
+    local relativeYaw  = (camYaw - hrpYaw) + math.pi   -- 180 deg flip
+
+    if rootJoint and rootJointBaselineC1 then
+        rootJoint.C1 = CFrame.Angles(0, relativeYaw, 0) * rootJointBaselineC1
+    end
+end)
+
+-- ============================================================
+-- ENGINE 4 - ANTI-SEPARATION MATRIX (glued joints)
+-- ============================================================
+RunService:BindToRenderStep("SkeetAntiSep", Enum.RenderPriority.Last.Value + 1, function()
+    if not CONFIG.antiSep then return end
+    if not hrp or not humanoid then return end
+
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    if not humanoid.AutoRotate then humanoid.AutoRotate = true end
+
+    local rootJoint, waistJoint, headJoint = nil, nil, nil
+    for _, child in ipairs(character:GetDescendants()) do
+        if child:IsA("Motor6D") then
+            local p0, p1 = child.Part0, child.Part1
+            if p0 and p1 then
+                if child.Name == "RootJoint" or p0.Name == "HumanoidRootPart" then
+                    rootJoint = child
+                elseif child.Name == "Waist" or p1.Name == "UpperTorso" then
+                    waistJoint = child
+                elseif p1.Name == "Head" or child.Name == "Neck" then
+                    headJoint = child
+                end
+            end
+        end
+    end
+
+    if rootJoint  and not rootJointBaselineC1    then rootJointBaselineC1    = rootJoint.C1  end
+    if waistJoint and not savedPositions.Waist   then savedPositions.Waist   = waistJoint.C1.Position end
+    if headJoint  and not savedPositions.Head    then savedPositions.Head    = headJoint.C1.Position  end
+
+    local _, camYaw, _ = camera.CFrame:ToEulerAnglesYXZ()
+    local _, hrpYaw, _ = hrp.CFrame:ToEulerAnglesYXZ()
+    local relYaw = camYaw - hrpYaw
+
+    if rootJoint and rootJointBaselineC1 then
+        rootJoint.C1 = CFrame.Angles(0, relYaw, 0) * rootJointBaselineC1
+    end
+    if waistJoint and savedPositions.Waist then
+        waistJoint.C1 = CFrame.new(savedPositions.Waist)
+            * CFrame.Angles(math.rad(CONFIG.sepWaist), 0, 0)
+    end
+    if headJoint and savedPositions.Head then
+        headJoint.C1 = CFrame.new(savedPositions.Head)
+            * CFrame.Angles(math.rad(CONFIG.sepHead), 0, 0)
+    end
+end)
+
+-- ============================================================
+-- GUI - Skeet.cc aesthetic, mobile-friendly
 -- ============================================================
 local C = {
-    BG        = Color3.fromRGB(14,  14, 18),
-    PANEL     = Color3.fromRGB(20,  20, 25),
-    HEADER    = Color3.fromRGB(17,  17, 22),
-    ACCENT    = Color3.fromRGB(210,  40, 40),    -- skeet red
-    ACCENT2   = Color3.fromRGB(235,  60, 60),
-    SEP       = Color3.fromRGB(35,  35, 42),
-    TEXT      = Color3.fromRGB(220, 220, 220),
-    SUBTEXT   = Color3.fromRGB(120, 120, 135),
-    ACTIVE_BG = Color3.fromRGB(30,  30, 38),
-    ON        = Color3.fromRGB(210,  40, 40),
-    OFF       = Color3.fromRGB(55,  55, 65),
-    FONT      = Enum.Font.GothamBold,
-    FONT_REG  = Enum.Font.Gotham,
+    BG       = Color3.fromRGB(14, 14, 18),
+    PANEL    = Color3.fromRGB(20, 20, 25),
+    HEADER   = Color3.fromRGB(17, 17, 22),
+    ACCENT   = Color3.fromRGB(210, 40, 40),
+    ACCENT2  = Color3.fromRGB(235, 60, 60),
+    SEP      = Color3.fromRGB(35, 35, 42),
+    TEXT     = Color3.fromRGB(220, 220, 220),
+    SUB      = Color3.fromRGB(120, 120, 135),
+    ROW      = Color3.fromRGB(22, 22, 28),
+    ON       = Color3.fromRGB(210, 40, 40),
+    OFF      = Color3.fromRGB(55, 55, 65),
+    FONT     = Enum.Font.GothamBold,
+    FONTR    = Enum.Font.Gotham,
 }
 
-local function corner(r, p) local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,r) c.Parent=p end
-local function stroke(t,clr,p) local s=Instance.new("UIStroke") s.Thickness=t s.Color=clr s.Parent=p end
-local function tween(obj,props,dur,es)
-    TweenService:Create(obj,TweenInfo.new(dur or .15,es or Enum.EasingStyle.Quad),props):Play()
+local function corner(r,p) local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,r) c.Parent=p end
+local function stroke(t,cl,p) local s=Instance.new("UIStroke") s.Thickness=t s.Color=cl s.Parent=p end
+local function tw(obj,props,dur)
+    TweenService:Create(obj,TweenInfo.new(dur or .15,Enum.EasingStyle.Quad),props):Play()
 end
 
 local gui = Instance.new("ScreenGui")
-gui.Name            = "SkeetUI"
-gui.ResetOnSpawn    = false
-gui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
-gui.IgnoreGuiInset  = true
-gui.Parent          = player.PlayerGui
+gui.Name="SkeetUI" gui.ResetOnSpawn=false
+gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+gui.IgnoreGuiInset=true
+gui.Parent=player.PlayerGui
 
--- ── Watermark ─────────────────────────────────────────────
-local wm = Instance.new("TextLabel")
-wm.Size              = UDim2.new(0,180,0,22)
-wm.Position          = UDim2.new(1,-190,0,8)
-wm.BackgroundColor3  = C.BG
-wm.BorderSizePixel   = 0
-wm.Text              = "skeet.cc  |  anti-aim"
-wm.TextColor3        = C.ACCENT
-wm.TextSize          = 12
-wm.Font              = C.FONT
-wm.TextXAlignment    = Enum.TextXAlignment.Center
-wm.Parent            = gui
-corner(4, wm)
-stroke(1, C.SEP, wm)
+-- watermark
+local wm=Instance.new("TextLabel")
+wm.Size=UDim2.new(0,185,0,22) wm.Position=UDim2.new(1,-193,0,8)
+wm.BackgroundColor3=C.BG wm.BorderSizePixel=0
+wm.Text="skeet.cc | anti-aim v4" wm.TextColor3=C.ACCENT
+wm.TextSize=11 wm.Font=C.FONT wm.TextXAlignment=Enum.TextXAlignment.Center
+wm.Parent=gui corner(4,wm) stroke(1,C.SEP,wm)
 
--- ── Floating toggle button (mobile tap) ───────────────────
-local fab = Instance.new("TextButton")
-fab.Size             = UDim2.new(0,52,0,52)
-fab.Position         = UDim2.new(0,14,0.5,-26)
-fab.BackgroundColor3 = C.ACCENT
-fab.BorderSizePixel  = 0
-fab.Text             = "☰"
-fab.TextColor3       = Color3.new(1,1,1)
-fab.TextSize         = 22
-fab.Font             = C.FONT
-fab.ZIndex           = 20
-fab.Parent           = gui
-corner(12, fab)
-stroke(1.5, C.ACCENT2, fab)
+-- FAB
+local fab=Instance.new("TextButton")
+fab.Size=UDim2.new(0,52,0,52) fab.Position=UDim2.new(0,14,0.5,-26)
+fab.BackgroundColor3=C.ACCENT fab.BorderSizePixel=0
+fab.Text="Menu" fab.TextColor3=Color3.new(1,1,1) fab.TextSize=22
+fab.Font=C.FONT fab.ZIndex=20 fab.Parent=gui
+corner(12,fab) stroke(1.5,C.ACCENT2,fab)
 
--- ── Main window ───────────────────────────────────────────
-local win = Instance.new("Frame")
-win.Name             = "Window"
-win.Size             = UDim2.new(0,310,0,520)
-win.Position         = UDim2.new(0,76,0.5,-260)
-win.BackgroundColor3 = C.BG
-win.BorderSizePixel  = 0
-win.Visible          = false
-win.ZIndex           = 10
-win.Parent           = gui
-corner(8, win)
-stroke(1, C.SEP, win)
+-- main window
+local win=Instance.new("Frame")
+win.Name="Win" win.Size=UDim2.new(0,315,0,0)
+win.Position=UDim2.new(0,76,0.5,-300)
+win.BackgroundColor3=C.BG win.BorderSizePixel=0
+win.Visible=false win.ZIndex=10 win.AutomaticSize=Enum.AutomaticSize.Y
+win.Parent=gui corner(8,win) stroke(1,C.SEP,win)
 
--- accent bar at top
-local accentBar = Instance.new("Frame")
-accentBar.Size            = UDim2.new(1,0,0,3)
-accentBar.BackgroundColor3= C.ACCENT
-accentBar.BorderSizePixel = 0
-accentBar.ZIndex          = 11
-accentBar.Parent          = win
-corner(8, accentBar)  -- only top corners matter visually
+local abar=Instance.new("Frame")
+abar.Size=UDim2.new(1,0,0,3) abar.BackgroundColor3=C.ACCENT
+abar.BorderSizePixel=0 abar.ZIndex=11 abar.Parent=win corner(8,abar)
 
--- ── Header ───────────────────────────────────────────────
-local header = Instance.new("Frame")
-header.Size             = UDim2.new(1,0,0,46)
-header.Position         = UDim2.new(0,0,0,3)
-header.BackgroundColor3 = C.HEADER
-header.BorderSizePixel  = 0
-header.ZIndex           = 11
-header.Parent           = win
+-- header
+local hdr=Instance.new("Frame")
+hdr.Size=UDim2.new(1,0,0,46) hdr.Position=UDim2.new(0,0,0,3)
+hdr.BackgroundColor3=C.HEADER hdr.BorderSizePixel=0 hdr.ZIndex=11 hdr.Parent=win
 
-local titleLbl = Instance.new("TextLabel")
-titleLbl.Size            = UDim2.new(1,-60,1,0)
-titleLbl.Position        = UDim2.new(0,14,0,0)
-titleLbl.BackgroundTransparency = 1
-titleLbl.Text            = "ANTI-AIM"
-titleLbl.TextColor3      = C.TEXT
-titleLbl.TextSize        = 15
-titleLbl.Font            = C.FONT
-titleLbl.TextXAlignment  = Enum.TextXAlignment.Left
-titleLbl.ZIndex          = 12
-titleLbl.Parent          = header
-
-local subtitleLbl = Instance.new("TextLabel")
-subtitleLbl.Size            = UDim2.new(1,-60,0,16)
-subtitleLbl.Position        = UDim2.new(0,14,1,-20)
-subtitleLbl.BackgroundTransparency = 1
-subtitleLbl.Text            = "ragebot › anti-aim"
-subtitleLbl.TextColor3      = C.SUBTEXT
-subtitleLbl.TextSize        = 11
-subtitleLbl.Font            = C.FONT_REG
-subtitleLbl.TextXAlignment  = Enum.TextXAlignment.Left
-subtitleLbl.ZIndex          = 12
-subtitleLbl.Parent          = header
-
--- close btn
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size             = UDim2.new(0,30,0,30)
-closeBtn.Position         = UDim2.new(1,-38,0.5,-15)
-closeBtn.BackgroundColor3 = C.ACTIVE_BG
-closeBtn.BorderSizePixel  = 0
-closeBtn.Text             = "✕"
-closeBtn.TextColor3       = C.SUBTEXT
-closeBtn.TextSize         = 14
-closeBtn.Font             = C.FONT
-closeBtn.ZIndex           = 13
-closeBtn.Parent           = header
-corner(6, closeBtn)
-
--- separator under header
-local sep0 = Instance.new("Frame")
-sep0.Size             = UDim2.new(1,0,0,1)
-sep0.Position         = UDim2.new(0,0,0,49)
-sep0.BackgroundColor3 = C.SEP
-sep0.BorderSizePixel  = 0
-sep0.ZIndex           = 11
-sep0.Parent           = win
-
--- ── Scroll container ─────────────────────────────────────
-local scroll = Instance.new("ScrollingFrame")
-scroll.Size                  = UDim2.new(1,0,1,-53)
-scroll.Position              = UDim2.new(0,0,0,53)
-scroll.BackgroundTransparency= 1
-scroll.BorderSizePixel       = 0
-scroll.ScrollBarThickness    = 3
-scroll.ScrollBarImageColor3  = C.ACCENT
-scroll.CanvasSize            = UDim2.new(0,0,0,0)
-scroll.AutomaticCanvasSize   = Enum.AutomaticSize.Y
-scroll.ZIndex                = 11
-scroll.Parent                = win
-
-local listLayout = Instance.new("UIListLayout")
-listLayout.SortOrder  = Enum.SortOrder.LayoutOrder
-listLayout.Padding    = UDim.new(0,0)
-listLayout.Parent     = scroll
-
-local padding = Instance.new("UIPadding")
-padding.PaddingBottom = UDim.new(0,12)
-padding.Parent        = scroll
-
--- ── Helper: section header ────────────────────────────────
-local function sectionHeader(text, order)
-    local f = Instance.new("Frame")
-    f.Size             = UDim2.new(1,0,0,30)
-    f.BackgroundTransparency = 1
-    f.BorderSizePixel  = 0
-    f.LayoutOrder      = order
-    f.ZIndex           = 12
-    f.Parent           = scroll
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size              = UDim2.new(1,-20,1,0)
-    lbl.Position          = UDim2.new(0,14,0,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text              = text:upper()
-    lbl.TextColor3        = C.ACCENT
-    lbl.TextSize          = 10
-    lbl.Font              = C.FONT
-    lbl.TextXAlignment    = Enum.TextXAlignment.Left
-    lbl.LetterSpacingUnits = Enum.FontSizeConstraint.RelativeSize
-    lbl.ZIndex            = 13
-    lbl.Parent            = f
-
-    local line = Instance.new("Frame")
-    line.Size             = UDim2.new(1,-28,0,1)
-    line.Position         = UDim2.new(0,14,1,-1)
-    line.BackgroundColor3 = C.SEP
-    line.BorderSizePixel  = 0
-    line.ZIndex           = 12
-    line.Parent           = f
-    return f
+local function lbl(txt,sz,col,parent,x,y,w,h,font,xa)
+    local l=Instance.new("TextLabel")
+    l.Text=txt l.TextSize=sz l.TextColor3=col
+    l.Size=UDim2.new(w or 1,0,0,h or 20)
+    l.Position=UDim2.new(0,x or 0,0,y or 0)
+    l.BackgroundTransparency=1 l.BorderSizePixel=0
+    l.Font=font or C.FONTR
+    l.TextXAlignment=xa or Enum.TextXAlignment.Left
+    l.ZIndex=13 l.Parent=parent return l
 end
 
--- ── Helper: toggle row ────────────────────────────────────
-local function toggleRow(text, desc, initVal, order, callback)
-    local row = Instance.new("Frame")
-    row.Size             = UDim2.new(1,0,0,54)
-    row.BackgroundTransparency = 1
-    row.BorderSizePixel  = 0
-    row.LayoutOrder      = order
-    row.ZIndex           = 12
-    row.Parent           = scroll
+lbl("ANTI-AIM",15,C.TEXT,hdr,14,8,0.7,20,C.FONT)
+lbl("ragebot  anti-aim",11,C.SUB,hdr,14,28,0.7,14)
 
-    local btn = Instance.new("TextButton")
-    btn.Size             = UDim2.new(1,-28,1,-10)
-    btn.Position         = UDim2.new(0,14,0,5)
-    btn.BackgroundColor3 = C.ACTIVE_BG
-    btn.BorderSizePixel  = 0
-    btn.Text             = ""
-    btn.ZIndex           = 13
-    btn.Parent           = row
-    corner(6, btn)
-    stroke(1, C.SEP, btn)
+local closeBt=Instance.new("TextButton")
+closeBt.Size=UDim2.new(0,30,0,30) closeBt.Position=UDim2.new(1,-38,0.5,-15)
+closeBt.BackgroundColor3=C.ROW closeBt.BorderSizePixel=0
+closeBt.Text="X" closeBt.TextColor3=C.SUB closeBt.TextSize=14
+closeBt.Font=C.FONT closeBt.ZIndex=13 closeBt.Parent=hdr corner(6,closeBt)
 
-    local nameL = Instance.new("TextLabel")
-    nameL.Size              = UDim2.new(1,-60,0,20)
-    nameL.Position          = UDim2.new(0,12,0,8)
-    nameL.BackgroundTransparency = 1
-    nameL.Text              = text
-    nameL.TextColor3        = C.TEXT
-    nameL.TextSize          = 13
-    nameL.Font              = C.FONT
-    nameL.TextXAlignment    = Enum.TextXAlignment.Left
-    nameL.ZIndex            = 14
-    nameL.Parent            = btn
+local sep0=Instance.new("Frame")
+sep0.Size=UDim2.new(1,0,0,1) sep0.Position=UDim2.new(0,0,0,49)
+sep0.BackgroundColor3=C.SEP sep0.BorderSizePixel=0 sep0.ZIndex=11 sep0.Parent=win
 
-    local descL = Instance.new("TextLabel")
-    descL.Size              = UDim2.new(1,-60,0,14)
-    descL.Position          = UDim2.new(0,12,0,27)
-    descL.BackgroundTransparency = 1
-    descL.Text              = desc
-    descL.TextColor3        = C.SUBTEXT
-    descL.TextSize          = 10
-    descL.Font              = C.FONT_REG
-    descL.TextXAlignment    = Enum.TextXAlignment.Left
-    descL.ZIndex            = 14
-    descL.Parent            = btn
+-- scroll
+local scroll=Instance.new("ScrollingFrame")
+scroll.Size=UDim2.new(1,0,0,480)
+scroll.Position=UDim2.new(0,0,0,53)
+scroll.BackgroundTransparency=1 scroll.BorderSizePixel=0
+scroll.ScrollBarThickness=3 scroll.ScrollBarImageColor3=C.ACCENT
+scroll.CanvasSize=UDim2.new(0,0,0,0)
+scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+scroll.ZIndex=11 scroll.Parent=win
 
-    -- pill toggle
-    local pill = Instance.new("Frame")
-    pill.Size             = UDim2.new(0,40,0,22)
-    pill.Position         = UDim2.new(1,-52,0.5,-11)
-    pill.BackgroundColor3 = initVal and C.ON or C.OFF
-    pill.BorderSizePixel  = 0
-    pill.ZIndex           = 14
-    pill.Parent           = btn
-    corner(11, pill)
+local ll=Instance.new("UIListLayout")
+ll.SortOrder=Enum.SortOrder.LayoutOrder ll.Padding=UDim.new(0,0)
+ll.Parent=scroll
+local lpad=Instance.new("UIPadding")
+lpad.PaddingBottom=UDim.new(0,14) lpad.Parent=scroll
 
-    local knob = Instance.new("Frame")
-    knob.Size             = UDim2.new(0,16,0,16)
-    knob.Position         = initVal and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8)
-    knob.BackgroundColor3 = Color3.new(1,1,1)
-    knob.BorderSizePixel  = 0
-    knob.ZIndex           = 15
-    knob.Parent           = pill
-    corner(8, knob)
+--  helpers 
+local lo=0
+local function nextLO() lo=lo+1 return lo end
 
-    local state = initVal
-    btn.MouseButton1Click:Connect(function()
-        state = not state
-        tween(pill, {BackgroundColor3 = state and C.ON or C.OFF})
-        tween(knob, {Position = state and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8)})
+local function secHead(txt)
+    local f=Instance.new("Frame")
+    f.Size=UDim2.new(1,0,0,28) f.BackgroundTransparency=1
+    f.BorderSizePixel=0 f.LayoutOrder=nextLO() f.ZIndex=12 f.Parent=scroll
+    local t=Instance.new("TextLabel")
+    t.Size=UDim2.new(1,-20,1,0) t.Position=UDim2.new(0,14,0,0)
+    t.BackgroundTransparency=1 t.Text=txt:upper()
+    t.TextColor3=C.ACCENT t.TextSize=9 t.Font=C.FONT
+    t.TextXAlignment=Enum.TextXAlignment.Left t.ZIndex=13 t.Parent=f
+    local ln=Instance.new("Frame")
+    ln.Size=UDim2.new(1,-28,0,1) ln.Position=UDim2.new(0,14,1,-1)
+    ln.BackgroundColor3=C.SEP ln.BorderSizePixel=0 ln.ZIndex=12 ln.Parent=f
+end
+
+local function pillToggle(parent, initVal, callback)
+    local pill=Instance.new("Frame")
+    pill.Size=UDim2.new(0,40,0,22) pill.Position=UDim2.new(1,-52,0.5,-11)
+    pill.BackgroundColor3=initVal and C.ON or C.OFF
+    pill.BorderSizePixel=0 pill.ZIndex=14 pill.Parent=parent corner(11,pill)
+    local knob=Instance.new("Frame")
+    knob.Size=UDim2.new(0,16,0,16)
+    knob.Position=initVal and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8)
+    knob.BackgroundColor3=Color3.new(1,1,1) knob.BorderSizePixel=0
+    knob.ZIndex=15 knob.Parent=pill corner(8,knob)
+
+    local state=initVal
+    local hitbox=Instance.new("TextButton")
+    hitbox.Size=UDim2.new(1,0,1,0) hitbox.BackgroundTransparency=1
+    hitbox.Text="" hitbox.ZIndex=16 hitbox.Parent=pill
+    hitbox.MouseButton1Click:Connect(function()
+        state=not state
+        tw(pill,{BackgroundColor3=state and C.ON or C.OFF})
+        tw(knob,{Position=state and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8)})
         callback(state)
     end)
-
-    return row
+    return pill
 end
 
--- ── Helper: slider row ────────────────────────────────────
-local function sliderRow(text, min, max, init, order, callback)
-    local row = Instance.new("Frame")
-    row.Size             = UDim2.new(1,0,0,66)
-    row.BackgroundTransparency = 1
-    row.BorderSizePixel  = 0
-    row.LayoutOrder      = order
-    row.ZIndex           = 12
-    row.Parent           = scroll
+local function toggleRow(txt,desc,initVal,callback)
+    local row=Instance.new("Frame")
+    row.Size=UDim2.new(1,0,0,52) row.BackgroundTransparency=1
+    row.BorderSizePixel=0 row.LayoutOrder=nextLO() row.ZIndex=12 row.Parent=scroll
+    local bg=Instance.new("Frame")
+    bg.Size=UDim2.new(1,-28,1,-8) bg.Position=UDim2.new(0,14,0,4)
+    bg.BackgroundColor3=C.ROW bg.BorderSizePixel=0 bg.ZIndex=13 bg.Parent=row
+    corner(6,bg) stroke(1,C.SEP,bg)
+    lbl(txt,13,C.TEXT,bg,12,7,0.75,18,C.FONT)
+    lbl(desc,10,C.SUB,bg,12,25,0.75,14)
+    pillToggle(bg,initVal,callback)
+end
 
-    local bg = Instance.new("Frame")
-    bg.Size             = UDim2.new(1,-28,1,-10)
-    bg.Position         = UDim2.new(0,14,0,5)
-    bg.BackgroundColor3 = C.ACTIVE_BG
-    bg.BorderSizePixel  = 0
-    bg.ZIndex           = 13
-    bg.Parent           = row
-    corner(6, bg)
-    stroke(1, C.SEP, bg)
-
-    local nameL = Instance.new("TextLabel")
-    nameL.Size              = UDim2.new(0.6,0,0,20)
-    nameL.Position          = UDim2.new(0,12,0,8)
-    nameL.BackgroundTransparency = 1
-    nameL.Text              = text
-    nameL.TextColor3        = C.TEXT
-    nameL.TextSize          = 13
-    nameL.Font              = C.FONT
-    nameL.TextXAlignment    = Enum.TextXAlignment.Left
-    nameL.ZIndex            = 14
-    nameL.Parent            = bg
-
-    local valL = Instance.new("TextLabel")
-    valL.Size              = UDim2.new(0.35,0,0,20)
-    valL.Position          = UDim2.new(0.65,0,0,8)
-    valL.BackgroundTransparency = 1
-    valL.Text              = tostring(init)
-    valL.TextColor3        = C.ACCENT
-    valL.TextSize          = 13
-    valL.Font              = C.FONT
-    valL.TextXAlignment    = Enum.TextXAlignment.Right
-    valL.ZIndex            = 14
-    valL.Parent            = bg
-
-    local track = Instance.new("Frame")
-    track.Size             = UDim2.new(1,-24,0,5)
-    track.Position         = UDim2.new(0,12,0,36)
-    track.BackgroundColor3 = C.SEP
-    track.BorderSizePixel  = 0
-    track.ZIndex           = 14
-    track.Parent           = bg
-    corner(3, track)
-
-    local fill = Instance.new("Frame")
-    fill.Size             = UDim2.new((init-min)/(max-min),0,1,0)
-    fill.BackgroundColor3 = C.ACCENT
-    fill.BorderSizePixel  = 0
-    fill.ZIndex           = 15
-    fill.Parent           = track
-    corner(3, fill)
-
-    -- drag handle (bigger for mobile)
-    local handle = Instance.new("TextButton")
-    handle.Size             = UDim2.new(0,22,0,22)
-    handle.AnchorPoint      = Vector2.new(0.5,0.5)
-    handle.Position         = UDim2.new((init-min)/(max-min),0,0.5,0)
-    handle.BackgroundColor3 = C.ACCENT
-    handle.BorderSizePixel  = 0
-    handle.Text             = ""
-    handle.ZIndex           = 16
-    handle.Parent           = track
-    corner(11, handle)
-    stroke(2, Color3.new(1,1,1), handle)
-
-    local dragging = false
-    handle.MouseButton1Down:Connect(function() dragging=true end)
-    handle.TouchLongPress:Connect(function() dragging=true end)
-
+local function sliderRow(txt,min,max,init,callback)
+    local row=Instance.new("Frame")
+    row.Size=UDim2.new(1,0,0,62) row.BackgroundTransparency=1
+    row.BorderSizePixel=0 row.LayoutOrder=nextLO() row.ZIndex=12 row.Parent=scroll
+    local bg=Instance.new("Frame")
+    bg.Size=UDim2.new(1,-28,1,-8) bg.Position=UDim2.new(0,14,0,4)
+    bg.BackgroundColor3=C.ROW bg.BorderSizePixel=0 bg.ZIndex=13 bg.Parent=row
+    corner(6,bg) stroke(1,C.SEP,bg)
+    lbl(txt,13,C.TEXT,bg,12,7,0.6,18,C.FONT)
+    local valL=lbl(tostring(init),13,C.ACCENT,bg,0,7,0.88,18,C.FONT,Enum.TextXAlignment.Right)
+    local track=Instance.new("Frame")
+    track.Size=UDim2.new(1,-24,0,5) track.Position=UDim2.new(0,12,0,34)
+    track.BackgroundColor3=C.SEP track.BorderSizePixel=0 track.ZIndex=14 track.Parent=bg
+    corner(3,track)
+    local fill=Instance.new("Frame")
+    fill.Size=UDim2.new((init-min)/(max-min),0,1,0)
+    fill.BackgroundColor3=C.ACCENT fill.BorderSizePixel=0 fill.ZIndex=15 fill.Parent=track
+    corner(3,fill)
+    local handle=Instance.new("TextButton")
+    handle.Size=UDim2.new(0,22,0,22) handle.AnchorPoint=Vector2.new(0.5,0.5)
+    handle.Position=UDim2.new((init-min)/(max-min),0,0.5,0)
+    handle.BackgroundColor3=C.ACCENT handle.BorderSizePixel=0
+    handle.Text="" handle.ZIndex=16 handle.Parent=track
+    corner(11,handle) stroke(2,Color3.new(1,1,1),handle)
+    local drag=false
+    handle.MouseButton1Down:Connect(function() drag=true end)
+    handle.TouchLongPress:Connect(function() drag=true end)
     UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1
-        or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
+        if i.UserInputType==Enum.UserInputType.MouseButton1
+        or i.UserInputType==Enum.UserInputType.Touch then drag=false end
     end)
-
     RunService.RenderStepped:Connect(function()
-        if not dragging then return end
-        local mouse = player:GetMouse()
-        local rel = math.clamp(mouse.X - track.AbsolutePosition.X, 0, track.AbsoluteSize.X)
-        local pct = rel / track.AbsoluteSize.X
-        local val = math.floor((min + (max-min)*pct)*10)/10
-        fill.Size = UDim2.new(pct,0,1,0)
-        handle.Position = UDim2.new(pct,0,0.5,0)
-        valL.Text = tostring(val)
+        if not drag then return end
+        local mx=player:GetMouse().X
+        local rel=math.clamp(mx-track.AbsolutePosition.X,0,track.AbsoluteSize.X)
+        local pct=rel/track.AbsoluteSize.X
+        local val=math.floor((min+(max-min)*pct)*10)/10
+        fill.Size=UDim2.new(pct,0,1,0)
+        handle.Position=UDim2.new(pct,0,0.5,0)
+        valL.Text=tostring(val)
         callback(val)
     end)
-
-    return row
 end
 
--- ── Helper: mode selector ─────────────────────────────────
-local modeList   = {"spin","jitter","random","orbital","glitch","psycho","earthquake","matrix"}
-local modeButtons= {}
-
-local function modeSelector(order)
-    local container = Instance.new("Frame")
-    container.Size             = UDim2.new(1,0,0,10 + math.ceil(#modeList/2)*42)
-    container.BackgroundTransparency = 1
-    container.BorderSizePixel  = 0
-    container.LayoutOrder      = order
-    container.ZIndex           = 12
-    container.Parent           = scroll
-
-    for i, m in ipairs(modeList) do
-        local col = (i-1)%2
-        local row2= math.floor((i-1)/2)
-
-        local btn = Instance.new("TextButton")
-        btn.Size             = UDim2.new(0.44,0,0,34)
-        btn.Position         = UDim2.new(0.04 + col*0.5, 0, 0, row2*42+4)
-        btn.BackgroundColor3 = m==CONFIG.mode and C.ACCENT or C.ACTIVE_BG
-        btn.BorderSizePixel  = 0
-        btn.Text             = m:upper()
-        btn.TextColor3       = m==CONFIG.mode and Color3.new(1,1,1) or C.SUBTEXT
-        btn.TextSize         = 11
-        btn.Font             = C.FONT
-        btn.ZIndex           = 13
-        btn.Parent           = container
-        corner(6, btn)
-        if m~=CONFIG.mode then stroke(1, C.SEP, btn) end
-
-        modeButtons[m] = btn
-
-        btn.MouseButton1Click:Connect(function()
-            for _, b in pairs(modeButtons) do
-                tween(b, {BackgroundColor3=C.ACTIVE_BG, TextColor3=C.SUBTEXT})
+local function modeGrid(modeList,getMode,setMode)
+    local cols=2
+    local rows=math.ceil(#modeList/cols)
+    local container=Instance.new("Frame")
+    container.Size=UDim2.new(1,0,0,rows*40+8)
+    container.BackgroundTransparency=1 container.BorderSizePixel=0
+    container.LayoutOrder=nextLO() container.ZIndex=12 container.Parent=scroll
+    local btns={}
+    for i,m in ipairs(modeList) do
+        local col=(i-1)%cols
+        local row=math.floor((i-1)/cols)
+        local b=Instance.new("TextButton")
+        b.Size=UDim2.new(0.44,0,0,32) b.BorderSizePixel=0
+        b.Position=UDim2.new(0.04+col*0.5,0,0,row*40+4)
+        b.BackgroundColor3=m==getMode() and C.ACCENT or C.ROW
+        b.TextColor3=m==getMode() and Color3.new(1,1,1) or C.SUB
+        b.Text=m:upper() b.TextSize=10 b.Font=C.FONT
+        b.ZIndex=13 b.Parent=container
+        corner(6,b)
+        if m~=getMode() then stroke(1,C.SEP,b) end
+        btns[m]=b
+        b.MouseButton1Click:Connect(function()
+            for _,x in pairs(btns) do
+                tw(x,{BackgroundColor3=C.ROW,TextColor3=C.SUB})
             end
-            tween(btn, {BackgroundColor3=C.ACCENT, TextColor3=Color3.new(1,1,1)})
-            CONFIG.mode = m
-            t = 0
+            tw(b,{BackgroundColor3=C.ACCENT,TextColor3=Color3.new(1,1,1)})
+            setMode(m) aaTime=0
         end)
     end
-    return container
 end
 
--- ── Build layout ──────────────────────────────────────────
-sectionHeader("General", 1)
-toggleRow("Anti-Aim", "Enable anti-aim engine", false, 2, function(v)
-    CONFIG.enabled = v
-    t = 0
+-- ============================================================
+-- BUILD THE PANEL
+-- ============================================================
+
+-- -- ANTI-AIM
+secHead("Anti-Aim")
+toggleRow("Anti-Aim","8 anti-aim modes",CONFIG.antiAim,function(v) CONFIG.antiAim=v aaTime=0 end)
+modeGrid(
+    {"spin","jitter","random","orbital","glitch","psycho","earthquake","matrix"},
+    function() return CONFIG.aaMode end,
+    function(m) CONFIG.aaMode=m end)
+sliderRow("Speed",0.1,10,CONFIG.aaSpeed,function(v) CONFIG.aaSpeed=v end)
+sliderRow("Intensity",0.1,3,CONFIG.aaIntensity,function(v) CONFIG.aaIntensity=v end)
+
+-- -- WAIST PITCH
+secHead("Waist Pitch")
+toggleRow("Waist Pitch","340 deg skyward tilt (-20 deg arch)",CONFIG.waistPitch,function(v)
+    CONFIG.waistPitch=v
+    if not v then
+        for joint,origC1 in pairs(originalC1s) do
+            if joint and joint.Parent then joint.C1=origC1 end
+        end
+    end
 end)
-
-sectionHeader("Mode", 3)
-modeSelector(4)
-
-sectionHeader("Parameters", 5)
-sliderRow("Speed",     0.1, 10, CONFIG.speed,     6, function(v) CONFIG.speed=v end)
-sliderRow("Intensity", 0.1,  3, CONFIG.intensity, 7, function(v) CONFIG.intensity=v end)
-
--- ── FAB toggle ────────────────────────────────────────────
+sliderRow("Waist Angle",0,360,CONFIG.waistAngle,function(v) CONFIG.waistAngle=v end)
+ 
+-- -- LOOK-BACK
+secHead("Look-Back")
+toggleRow("Look-Back","180 deg yaw flip on rootjoint",CONFIG.lookBack,function(v)
+    CONFIG.lookBack=v
+    if not v then rootJointBaselineC1=nil end
+end)
+-- -- ANTI-SEPARATION
+secHead("Anti-Separation")
+toggleRow("Anti-Sep Matrix","Glued joints, blocks separation",CONFIG.antiSep,function(v)
+    CONFIG.antiSep=v
+    if not v then
+        rootJointBaselineC1=nil
+        for k in pairs(savedPositions) do savedPositions[k]=nil end
+    end
+end)
+sliderRow("Waist Angle",0,90,CONFIG.sepWaist,function(v) CONFIG.sepWaist=v end)
+sliderRow("Head Angle",-45,45,CONFIG.sepHead,function(v) CONFIG.sepHead=v end)
+ 
+-- ============================================================
+-- FAB / CLOSE / DRAG
+-- ============================================================
 fab.MouseButton1Click:Connect(function()
-    win.Visible = not win.Visible
-    tween(fab, {BackgroundColor3 = win.Visible and C.ACTIVE_BG or C.ACCENT})
+    win.Visible=not win.Visible
+    tw(fab,{BackgroundColor3=win.Visible and C.ROW or C.ACCENT})
 end)
-
-closeBtn.MouseButton1Click:Connect(function()
-    win.Visible = false
-    tween(fab, {BackgroundColor3 = C.ACCENT})
+closeBt.MouseButton1Click:Connect(function()
+    win.Visible=false tw(fab,{BackgroundColor3=C.ACCENT})
 end)
-
--- ── Drag window ───────────────────────────────────────────
 do
-    local drag, ds, sp = false, nil, nil
-    header.InputBegan:Connect(function(i)
+    local drag,ds,sp=false,nil,nil
+    hdr.InputBegan:Connect(function(i)
         if i.UserInputType==Enum.UserInputType.MouseButton1
         or i.UserInputType==Enum.UserInputType.Touch then
             drag=true ds=i.Position sp=win.Position
@@ -549,5 +563,6 @@ do
         end
     end)
 end
-
-print("[skeet-ui] loaded — tap ☰ to open")
+ 
+print("[skeet-ui v4] Loaded - tap Menu to open panel")
+print("  Engines: Anti-Aim | Waist-Pitch | Look-Back | Anti-Sep")
