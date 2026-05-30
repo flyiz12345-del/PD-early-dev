@@ -7,7 +7,7 @@
        Look-Back    (180 deg yaw flip)
        Anti-Separation Matrix (glued joints)
     Mobile friendly | Skeet.cc aesthetic
-shout out to claude for organizing 
+Ty claude for organizing
 ]]
 
 -- ============================================================
@@ -117,26 +117,29 @@ player.CharacterAdded:Connect(cleanAndCache)
 task.defer(captureBaselines)
 
 -- ============================================================
--- ENGINE 1 - ANTI-AIM
--- All modes go through RootJoint.C1 - NEVER touches hrp.CFrame
--- so physics/velocity are 100% preserved (no flying, no lag)
+-- ENGINE 1+3 - ANTI-AIM + LOOK-BACK  (merged, one RootJoint write)
+--
+-- Both features write to RootJoint.C1 so they MUST be combined
+-- into a single step  otherwise the last one always kills the other.
+--
+-- Order of composition:
+--   base  <- anti-aim rotation  <- look-back yaw offset
 -- ============================================================
 local aaTime = 0
 
--- returns the yaw+pitch+roll rotation CFrame to bake into RootJoint.C1
+-- Each mode returns rx, ry, rz (radians).
+-- JITTER: pure yaw only, 45 deg left/right relative to forward.
+-- No pitch so the character always faces roughly forward.
 local aaModes = {
     spin = function(dt)
         aaTime = aaTime + dt
-        -- accumulate raw radians so full 360 is never clamped
-        local yaw = aaTime * CONFIG.aaSpeed * 8
-        return 0, yaw, 0
+        return 0, aaTime * CONFIG.aaSpeed * 8, 0
     end,
     jitter = function(dt)
+        -- yaw-only: snaps +-45 deg relative to forward, no pitch/roll
         aaTime = aaTime + dt
-        local t = aaTime * CONFIG.aaSpeed
-        return  math.sin(t*50) * math.rad(45)  * CONFIG.aaIntensity,
-                math.cos(t*50) * math.rad(180) * CONFIG.aaIntensity,
-                0
+        local yaw = math.sin(aaTime * CONFIG.aaSpeed * 25) * math.rad(45) * CONFIG.aaIntensity
+        return 0, yaw, 0
     end,
     random = function()
         return  (math.random()-.5) * math.rad(90)  * CONFIG.aaIntensity,
@@ -180,23 +183,42 @@ local aaModes = {
     end,
 }
 
-RunService:BindToRenderStep("SkeetAntiAim", Enum.RenderPriority.Last.Value - 2, function(dt)
-    if not CONFIG.antiAim then return end
+RunService:BindToRenderStep("SkeetRootEngine", Enum.RenderPriority.Last.Value, function(dt)
     captureBaselines()
     local rj = cachedJoints.root
     if not rj or not baseC1.root then return end
 
-    local fn = aaModes[CONFIG.aaMode]
-    if not fn then return end
+    -- start from baseline
+    local finalC1 = baseC1.root
 
-    local rx, ry, rz = fn(dt)
-    -- inject into RootJoint - physics body (HRP) is never touched
-    rj.C1 = CFrame.Angles(rx, ry, rz) * baseC1.root
+    -- layer 1: anti-aim rotation
+    if CONFIG.antiAim then
+        local fn = aaModes[CONFIG.aaMode]
+        if fn then
+            local rx, ry, rz = fn(dt)
+            finalC1 = CFrame.Angles(rx, ry, rz) * finalC1
+        end
+    else
+        -- keep aaTime ticking stopped while disabled
+        aaTime = aaTime
+    end
+
+    -- layer 2: look-back yaw (stacks ON TOP of whatever anti-aim is doing)
+    if CONFIG.lookBack then
+        local camera = workspace.CurrentCamera
+        if camera then
+            local _, camYaw, _ = camera.CFrame:ToEulerAnglesYXZ()
+            local _, hrpYaw, _ = hrp.CFrame:ToEulerAnglesYXZ()
+            finalC1 = CFrame.Angles(0, (camYaw - hrpYaw) + math.pi, 0) * finalC1
+        end
+    end
+
+    rj.C1 = finalC1
 end)
 
 -- ============================================================
 -- ENGINE 2 - WAIST PITCH  (340 deg skyward tilt)
--- Uses Waist joint C1 only - no hrp.CFrame, no velocity loss
+-- Separate joint (Waist) so no conflict with RootEngine above
 -- ============================================================
 RunService:BindToRenderStep("SkeetWaistPitch", Enum.RenderPriority.Last.Value - 1, function()
     captureBaselines()
@@ -204,29 +226,10 @@ RunService:BindToRenderStep("SkeetWaistPitch", Enum.RenderPriority.Last.Value - 
     if not wj or not baseC1.waist then return end
 
     if not CONFIG.waistPitch then
-        -- restore baseline
         wj.C1 = baseC1.waist
         return
     end
     wj.C1 = baseC1.waist * CFrame.Angles(math.rad(CONFIG.waistAngle), 0, 0)
-end)
-
--- ============================================================
--- ENGINE 3 - LOOK-BACK  (180 deg yaw flip)
--- ============================================================
-RunService:BindToRenderStep("SkeetLookBack", Enum.RenderPriority.Last.Value, function()
-    if not CONFIG.lookBack then return end
-    captureBaselines()
-    local rj = cachedJoints.root
-    if not rj or not baseC1.root then return end
-
-    local camera = workspace.CurrentCamera
-    if not camera then return end
-
-    local _, camYaw, _ = camera.CFrame:ToEulerAnglesYXZ()
-    local _, hrpYaw, _ = hrp.CFrame:ToEulerAnglesYXZ()
-    -- 180 deg flip: character faces away from camera direction
-    rj.C1 = CFrame.Angles(0, (camYaw - hrpYaw) + math.pi, 0) * baseC1.root
 end)
 
 -- ============================================================
@@ -295,7 +298,7 @@ gui.Parent=player.PlayerGui
 local wm=Instance.new("TextLabel")
 wm.Size=UDim2.new(0,185,0,22) wm.Position=UDim2.new(1,-193,0,8)
 wm.BackgroundColor3=C.BG wm.BorderSizePixel=0
-wm.Text=" volatile.tech | anti-aim v4" wm.TextColor3=C.ACCENT
+wm.Text="skeet.cc | anti-aim v4" wm.TextColor3=C.ACCENT
 wm.TextSize=11 wm.Font=C.FONT wm.TextXAlignment=Enum.TextXAlignment.Center
 wm.Parent=gui corner(4,wm) stroke(1,C.SEP,wm)
 
@@ -526,6 +529,7 @@ toggleRow("Look-Back","180 deg yaw flip on rootjoint",CONFIG.lookBack,function(v
     CONFIG.lookBack=v
     if not v then rootJointBaselineC1=nil end
 end)
+ 
 -- -- ANTI-SEPARATION
 secHead("Anti-Separation")
 toggleRow("Anti-Sep Matrix","Glued joints, blocks separation",CONFIG.antiSep,function(v)
@@ -550,7 +554,7 @@ closeBt.MouseButton1Click:Connect(function()
 end)
  
 do
-  local drag,ds,sp=false,nil,nil
+    local drag,ds,sp=false,nil,nil
     hdr.InputBegan:Connect(function(i)
         if i.UserInputType==Enum.UserInputType.MouseButton1
         or i.UserInputType==Enum.UserInputType.Touch then
