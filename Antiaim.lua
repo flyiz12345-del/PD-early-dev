@@ -298,7 +298,7 @@ gui.Parent=player.PlayerGui
 local wm=Instance.new("TextLabel")
 wm.Size=UDim2.new(0,185,0,22) wm.Position=UDim2.new(1,-193,0,8)
 wm.BackgroundColor3=C.BG wm.BorderSizePixel=0
-wm.Text="skeet.cc | anti-aim v4" wm.TextColor3=C.ACCENT
+wm.Text="volatile.tech | anti-aim v4" wm.TextColor3=C.ACCENT
 wm.TextSize=11 wm.Font=C.FONT wm.TextXAlignment=Enum.TextXAlignment.Center
 wm.Parent=gui corner(4,wm) stroke(1,C.SEP,wm)
 
